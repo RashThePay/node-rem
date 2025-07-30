@@ -1,7 +1,5 @@
 export {};
 import { NextFunction, Request, Response, Router } from 'express';
-const mongoose = require('mongoose');
-const ObjectId = mongoose.Types.ObjectId;
 const httpStatus = require('http-status');
 const { omit } = require('lodash');
 import { User, UserNote } from '../../api/models';
@@ -110,7 +108,7 @@ exports.list = async (req: Request, res: Response, next: NextFunction) => {
 exports.listUserNotes = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userId } = req.params;
-    req.query = { ...req.query, user: new ObjectId(userId) }; // append to query (by userId) to final query
+    req.query = { ...req.query, userId: userId }; // append to query (by userId) to final query
     const data = (await UserNote.list({ query: req.query })).transform(req);
     apiJson({ req, res, data, model: UserNote });
   } catch (e) {
@@ -126,12 +124,11 @@ exports.createNote = async (req: Request, res: Response, next: NextFunction) => 
   const { userId } = req.params;
   const { title, note } = req.body;
   try {
-    const newNote = new UserNote({
-      user: new ObjectId(userId),
+    const data = await UserNote.create({
+      userId: parseInt(userId),
       title,
       note
     });
-    const data = await newNote.save();
     apiJson({ req, res, data, model: UserNote });
   } catch (e) {
     next(e);
@@ -146,13 +143,18 @@ exports.createNote = async (req: Request, res: Response, next: NextFunction) => 
  */
 exports.readUserNote = async (req: Request, res: Response, next: NextFunction) => {
   const { userId, noteId } = req.params;
-  const { _id } = req.route.meta.user;
-  const currentUserId = _id.toString();
+  const { id } = req.route.meta.user;
+  const currentUserId = id.toString();
   if (userId !== currentUserId) {
-    return next(); // only logged in user can delete her own notes
+    return next(); // only logged in user can read her own notes
   }
   try {
-    const data = await UserNote.findOne({ user: new ObjectId(userId), _id: new ObjectId(noteId) });
+    const data = await UserNote.findOne({ 
+      where: { 
+        userId: parseInt(userId), 
+        id: parseInt(noteId) 
+      } 
+    });
     apiJson({ req, res, data });
   } catch (e) {
     next(e);
@@ -166,15 +168,22 @@ exports.readUserNote = async (req: Request, res: Response, next: NextFunction) =
  */
 exports.updateUserNote = async (req: Request, res: Response, next: NextFunction) => {
   const { userId, noteId } = req.params;
-  const { _id } = req.route.meta.user;
+  const { id } = req.route.meta.user;
   const { note } = req.body;
-  const currentUserId = _id.toString();
+  const currentUserId = id.toString();
   if (userId !== currentUserId) {
-    return next(); // only logged in user can delete her own notes
+    return next(); // only logged in user can update her own notes
   }
   try {
-    const query = { user: new ObjectId(userId), _id: new ObjectId(noteId) };
-    await UserNote.findOneAndUpdate(query, { note }, {});
+    await UserNote.update(
+      { note }, 
+      { 
+        where: { 
+          userId: parseInt(userId), 
+          id: parseInt(noteId) 
+        } 
+      }
+    );
     apiJson({ req, res, data: {} });
   } catch (e) {
     next(e);
@@ -187,13 +196,18 @@ exports.updateUserNote = async (req: Request, res: Response, next: NextFunction)
  */
 exports.deleteUserNote = async (req: Request, res: Response, next: NextFunction) => {
   const { userId, noteId } = req.params;
-  const { _id } = req.route.meta.user;
-  const currentUserId = _id.toString();
+  const { id } = req.route.meta.user;
+  const currentUserId = id.toString();
   if (userId !== currentUserId) {
     return next(); // only logged in user can delete her own notes
   }
   try {
-    await UserNote.remove({ user: new ObjectId(userId), _id: new ObjectId(noteId) });
+    await UserNote.destroy({ 
+      where: { 
+        userId: parseInt(userId), 
+        id: parseInt(noteId) 
+      } 
+    });
     apiJson({ req, res, data: {} });
   } catch (e) {
     next(e);
@@ -206,17 +220,22 @@ exports.deleteUserNote = async (req: Request, res: Response, next: NextFunction)
  */
 exports.likeUserNote = async (req: Request, res: Response, next: NextFunction) => {
   const { noteId } = req.params;
-  const { _id } = req.route.meta.user;
-  const currentUserId = _id.toString();
+  const { id } = req.route.meta.user;
+  const currentUserId = id.toString();
   if (likesMap[`${currentUserId}__${noteId}`]) {
     return next(); // already liked => return.
   }
   try {
-    const query = { _id: new ObjectId(noteId) };
-    const dbItem = await UserNote.findOne(query);
+    const dbItem = await UserNote.findByPk(parseInt(noteId));
+    if (!dbItem) {
+      return next(); // note not found
+    }
     const newLikes = (dbItem.likes > 0 ? dbItem.likes : 0) + 1;
 
-    await UserNote.findOneAndUpdate(query, { likes: newLikes }, {});
+    await UserNote.update(
+      { likes: newLikes }, 
+      { where: { id: parseInt(noteId) } }
+    );
     likesMap[`${currentUserId}__${noteId}`] = 1; // flag as already liked.
     apiJson({ req, res, data: {} });
   } catch (e) {
@@ -228,10 +247,12 @@ exports.likeUserNote = async (req: Request, res: Response, next: NextFunction) =
  * Delete user
  * @public
  */
-exports.remove = (req: Request, res: Response, next: NextFunction) => {
+exports.remove = async (req: Request, res: Response, next: NextFunction) => {
   const { user } = req.route.meta;
-  user
-    .remove()
-    .then(() => res.status(httpStatus.NO_CONTENT).end())
-    .catch((e: any) => next(e));
+  try {
+    await user.destroy();
+    res.status(httpStatus.NO_CONTENT).end();
+  } catch (e) {
+    next(e);
+  }
 };

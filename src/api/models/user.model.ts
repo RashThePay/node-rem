@@ -1,6 +1,7 @@
 export {};
 import { NextFunction, Request, Response, Router } from 'express';
-const mongoose = require('mongoose');
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../../config/sequelize');
 const httpStatus = require('http-status');
 const bcrypt = require('bcryptjs');
 const moment = require('moment-timezone');
@@ -16,124 +17,46 @@ const { env, JWT_SECRET, JWT_EXPIRATION_MINUTES } = require('../../config/vars')
 const roles = ['user', 'admin'];
 
 /**
- * User Schema
- * @private
+ * User Model Definition
  */
-const userSchema = new mongoose.Schema(
-  {
-    email: {
-      type: String,
-      match: /^\S+@\S+\.\S+$/,
-      required: true,
-      unique: true,
-      trim: true,
-      lowercase: true,
-      index: { unique: true }
-    },
-    password: {
-      type: String,
-      required: true,
-      minlength: 6,
-      maxlength: 128
-    },
-    tempPassword: {
-      type: String, // one-time temporary password (must delete after user logged in)
-      required: false,
-      minlength: 6,
-      maxlength: 128
-    },
-    name: {
-      type: String,
-      maxlength: 128,
-      index: true,
-      trim: true
-    },
-    services: {
-      facebook: String,
-      google: String
-    },
-    role: {
-      type: String,
-      enum: roles,
-      default: 'user'
-    },
-    picture: {
-      type: String,
-      trim: true
-    }
-  },
-  {
-    timestamps: true
-  }
-);
-const ALLOWED_FIELDS = ['id', 'name', 'email', 'picture', 'role', 'createdAt'];
+class User extends Model {
+  public id!: number;
+  public email!: string;
+  public password!: string;
+  public tempPassword?: string;
+  public name?: string;
+  public services?: {
+    facebook?: string;
+    google?: string;
+  };
+  public role!: string;
+  public picture?: string;
+  public readonly createdAt!: Date;
+  public readonly updatedAt!: Date;
 
-/**
- * Add your
- * - pre-save hooks
- * - validations
- * - virtuals
- */
-userSchema.pre('save', async function save(next: NextFunction) {
-  try {
-    // modifying password => encrypt it:
-    const rounds = env === 'test' ? 1 : 10;
-    if (this.isModified('password')) {
-      const hash = await bcrypt.hash(this.password, rounds);
-      this.password = hash;
-    } else if (this.isModified('tempPassword')) {
-      const hash = await bcrypt.hash(this.tempPassword, rounds);
-      this.tempPassword = hash;
-    }
-    return next(); // normal save
-  } catch (error) {
-    return next(error);
-  }
-});
-
-/**
- * Methods
- */
-userSchema.method({
-  // query is optional, e.g. to transform data for response but only include certain "fields"
-  transform({ query = {} }: { query?: any } = {}) {
-    // transform every record (only respond allowed fields and "&fields=" in query)
+  // Instance methods
+  transform(options: { query?: any } = {}) {
+    const { query = {} } = options;
     return transformData(this, query, ALLOWED_FIELDS);
-  },
+  }
 
   token() {
-    const playload = {
+    const payload = {
       exp: moment().add(JWT_EXPIRATION_MINUTES, 'minutes').unix(),
       iat: moment().unix(),
-      sub: this._id
+      sub: this.id
     };
-    return jwt.encode(playload, JWT_SECRET);
-  },
+    return jwt.encode(payload, JWT_SECRET);
+  }
 
   async passwordMatches(password: string) {
     return bcrypt.compare(password, this.password);
   }
-});
 
-/**
- * Statics
- */
-userSchema.statics = {
-  roles,
-
-  /**
-   * Get user
-   *
-   * @param {ObjectId} id - The objectId of user.
-   * @returns {Promise<User, APIError>}
-   */
-  async get(id: any) {
+  // Static methods
+  static async get(id: any) {
     try {
-      let user;
-
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        user = await this.findById(id).exec();
-      }
+      const user = await User.findByPk(id);
       if (user) {
         return user;
       }
@@ -145,21 +68,15 @@ userSchema.statics = {
     } catch (error) {
       throw error;
     }
-  },
+  }
 
-  /**
-   * Find user by email and tries to generate a JWT token
-   *
-   * @param {ObjectId} id - The objectId of user.
-   * @returns {Promise<User, APIError>}
-   */
-  async findAndGenerateToken(options: any) {
+  static async findAndGenerateToken(options: any) {
     const { email, password, refreshObject } = options;
     if (!email) {
       throw new APIError({ message: 'An email is required to generate a token' });
     }
 
-    const user = await this.findOne({ email }).exec();
+    const user = await User.findOne({ where: { email } });
     const err: any = {
       status: httpStatus.UNAUTHORIZED,
       isPublic: true
@@ -179,25 +96,14 @@ userSchema.statics = {
       err.message = 'Incorrect email or refreshToken';
     }
     throw new APIError(err);
-  },
+  }
 
-  /**
-   * List users.
-   * @returns {Promise<User[]>}
-   */
-  list({ query }: { query: any }) {
-    return listData(this, query, ALLOWED_FIELDS);
-  },
+  static list({ query }: { query: any }) {
+    return listData(User, query, ALLOWED_FIELDS);
+  }
 
-  /**
-   * Return new validation error
-   * if error is a mongoose duplicate key error
-   *
-   * @param {Error} error
-   * @returns {Error|APIError}
-   */
-  checkDuplicateEmail(error: any) {
-    if (error.name === 'MongoError' && error.code === 11000) {
+  static checkDuplicateEmail(error: any) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
       return new APIError({
         message: 'Validation Error',
         errors: [
@@ -213,12 +119,19 @@ userSchema.statics = {
       });
     }
     return error;
-  },
+  }
 
-  async oAuthLogin({ service, id, email, name, picture }: any) {
-    const user = await this.findOne({ $or: [{ [`services.${service}`]: id }, { email }] });
+  static async oAuthLogin({ service, id, email, name, picture }: any) {
+    const whereCondition = {
+      [sequelize.Sequelize.Op.or]: [
+        { [`services.${service}`]: id },
+        { email }
+      ]
+    };
+    
+    const user = await User.findOne({ where: whereCondition });
     if (user) {
-      user.services[service] = id;
+      user.services = { ...user.services, [service]: id };
       if (!user.name) {
         user.name = name;
       }
@@ -228,23 +141,96 @@ userSchema.statics = {
       return user.save();
     }
     const password = uuidv4();
-    return this.create({
+    return User.create({
       services: { [service]: id },
       email,
       password,
       name,
       picture
     });
-  },
-
-  async count() {
-    return this.find().count();
   }
-};
 
-/**
- * @typedef User
- */
-const User = mongoose.model('User', userSchema);
-User.ALLOWED_FIELDS = ALLOWED_FIELDS;
+  static async count(): Promise<number> {
+    return User.count();
+  }
+}
+
+const ALLOWED_FIELDS = ['id', 'name', 'email', 'picture', 'role', 'createdAt'];
+
+// Initialize the model
+User.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true
+    },
+    email: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+      validate: {
+        isEmail: true
+      }
+    },
+    password: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      validate: {
+        len: [6, 128]
+      }
+    },
+    tempPassword: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      validate: {
+        len: [6, 128]
+      }
+    },
+    name: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      validate: {
+        len: [0, 128]
+      }
+    },
+    services: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: {}
+    },
+    role: {
+      type: DataTypes.ENUM(...roles),
+      allowNull: false,
+      defaultValue: 'user'
+    },
+    picture: {
+      type: DataTypes.STRING,
+      allowNull: true
+    }
+  },
+  {
+    sequelize,
+    modelName: 'User',
+    tableName: 'users',
+    hooks: {
+      beforeSave: async (user: User) => {
+        if (user.changed('password')) {
+          const rounds = env === 'test' ? 1 : 10;
+          const hash = await bcrypt.hash(user.password, rounds);
+          user.password = hash;
+        } else if (user.changed('tempPassword') && user.tempPassword) {
+          const rounds = env === 'test' ? 1 : 10;
+          const hash = await bcrypt.hash(user.tempPassword, rounds);
+          user.tempPassword = hash;
+        }
+      }
+    }
+  }
+);
+
+// Export model with additional properties
+(User as any).ALLOWED_FIELDS = ALLOWED_FIELDS;
+(User as any).roles = roles;
+
 module.exports = User;

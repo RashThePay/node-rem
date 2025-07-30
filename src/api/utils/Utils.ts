@@ -105,33 +105,11 @@ export function getPageQuery(reqQuery: any) {
   return output;
 }
 
-// normalize req.query to get "safe" query fields => return "query" obj for mongoose (find, etc.)
-export function getMongoQuery(reqQuery: any, fieldArray: string[]) {
-  const queryObj: any = {};
-  fieldArray.map((field) => {
-    // get query fields excluding pagination fields:
-    if (['page', 'perPage', 'limit', 'offset'].indexOf(field) < 0 && reqQuery[field]) {
-      // TODO: do more checks of query parameters for better security...
-      let val = reqQuery[field];
-      if (typeof val === 'string' && val.length >= 2 && (val[0] === '*' || val[val.length - 1] === '*')) {
-        // field value has "*text*" => use MongoDB Regex query: (partial text search)
-        val = val.replace(/\*/g, ''); // remove "*"
-        val = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // escape other special chars - https://goo.gl/eWCVDH
-        queryObj[field] = { $regex: val, $options: 'i' };
-      } else {
-        queryObj[field] = reqQuery[field]; // exact search
-      }
-    }
-  });
-  console.log('- queryObj: ', JSON.stringify(queryObj));
-  return queryObj;
-}
-
 // function to decorate a promise with useful helpers like: .transform(), etc.
-// @example: return queryPromise( this.find({}) )
-export function queryPromise(mongoosePromise: any) {
+// @example: return queryPromise( sequelizePromise )
+export function queryPromise(sequelizePromise: any) {
   return new Promise(async (resolve) => {
-    const items = await mongoosePromise;
+    const items = await sequelizePromise;
 
     // decorate => transform() on the result
     items.transform = (params: any) => {
@@ -160,10 +138,9 @@ export async function apiJson({ req, res, data, model, meta = {}, json = false }
   if (model) {
     // if pass in "model" => query for totalCount & put in "meta"
     const isPagination = req.query.limit || req.query.page;
-    if (isPagination && model.countDocuments) {
-      const query = getMongoQuery(req.query, model.ALLOWED_FIELDS);
-      const countQuery = jsonClone(query);
-      const totalCount = await model.countDocuments(countQuery);
+    if (isPagination && model.count) {
+      // Use Sequelize count method
+      const totalCount = await model.count();
       metaData.totalCount = totalCount;
       if (queryObj.perPage) {
         metaData.pageCount = Math.ceil(totalCount / queryObj.perPage);

@@ -1,33 +1,70 @@
 export {};
-const mongoose = require('mongoose');
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../../config/sequelize');
 import { transformData, listData } from '../../api/utils/ModelUtils';
 
-const userNoteSchema = new mongoose.Schema(
-  {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    title: { type: String, default: '' },
-    note: String,
-    likes: { type: Number, default: 0 }
-  },
-  { timestamps: true }
-);
-const ALLOWED_FIELDS = ['id', 'user', 'title', 'note', 'likes', 'createdAt'];
+class UserNote extends Model {
+  public id!: number;
+  public userId!: number;
+  public title!: string;
+  public note!: string;
+  public likes!: number;
+  public readonly createdAt!: Date;
+  public readonly updatedAt!: Date;
 
-userNoteSchema.method({
-  // query is optional, e.g. to transform data for response but only include certain "fields"
-  transform({ query = {} }: { query?: any } = {}) {
-    // transform every record (only respond allowed fields and "&fields=" in query)
+  // Instance methods
+  transform(options: { query?: any } = {}) {
+    const { query = {} } = options;
     return transformData(this, query, ALLOWED_FIELDS);
   }
-});
 
-userNoteSchema.statics = {
-  list({ query }: { query: any }) {
-    return listData(this, query, ALLOWED_FIELDS);
+  // Static methods
+  static list({ query }: { query: any }) {
+    return listData(UserNote, query, ALLOWED_FIELDS);
   }
-};
+}
 
-const Model = mongoose.model('UserNote', userNoteSchema);
-Model.ALLOWED_FIELDS = ALLOWED_FIELDS;
+const ALLOWED_FIELDS = ['id', 'userId', 'title', 'note', 'likes', 'createdAt'];
 
-module.exports = Model;
+// Initialize the model
+UserNote.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true
+    },
+    userId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: 'users',
+        key: 'id'
+      }
+    },
+    title: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: ''
+    },
+    note: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    likes: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    }
+  },
+  {
+    sequelize,
+    modelName: 'UserNote',
+    tableName: 'user_notes'
+  }
+);
+
+// Export model with additional properties
+(UserNote as any).ALLOWED_FIELDS = ALLOWED_FIELDS;
+
+module.exports = UserNote;

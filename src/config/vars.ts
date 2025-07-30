@@ -28,8 +28,20 @@ module.exports = {
   SEC_ADMIN_EMAIL: env.SEC_ADMIN_EMAIL,
   // setAdminToken: (admToken: string) => (adminToken = admToken),
   isAdmin: (user: any) => user && user.email === env.SEC_ADMIN_EMAIL,
-  mongo: {
-    uri: env.NODE_ENV === 'test' ? env.MONGO_URI_TESTS : env.MONGO_URI
+  postgres: {
+    host: env.POSTGRES_HOST || 'localhost',
+    port: env.POSTGRES_PORT || 5432,
+    database: env.NODE_ENV === 'test' ? env.POSTGRES_DB_TEST : env.POSTGRES_DB,
+    username: env.POSTGRES_USER,
+    password: env.POSTGRES_PASSWORD,
+    dialect: 'postgres',
+    logging: env.NODE_ENV === 'development' ? console.log : false,
+    pool: {
+      max: 5,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    }
   },
   logs: env.NODE_ENV === 'production' ? 'combined' : 'dev'
 };

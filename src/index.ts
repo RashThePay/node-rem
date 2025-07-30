@@ -10,9 +10,22 @@ const fs = require('fs');
 const app = require('./config/express');
 const socket = require('./api/services/socket');
 
-const mongoose = require('./config/mongoose');
+const sequelize = require('./config/sequelize');
 
-mongoose.connect(); // open mongoose connection
+// Import models to set up associations
+require('./api/models');
+
+// Connect to PostgreSQL database and sync models
+sequelize.connect().then(async () => {
+  // Sync database tables (in development, you might want to set force: true to recreate tables)
+  await sequelize.sequelize.sync({ 
+    force: env === 'development' // Only recreate tables in development
+  });
+  console.log('Database synchronized successfully');
+}).catch((error: any) => {
+  console.error('Failed to connect to database:', error);
+  process.exit(1);
+});
 
 // HTTPS options
 const options = {};
